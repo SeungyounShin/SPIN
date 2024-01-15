@@ -1,0 +1,26 @@
+dump
+*.pyc
+*.swp
+*.swo
+
+# Ignore all .pyc files (compiled python files)
+*.pyc
+
+# Ignore __pycache__ directories
+__pycache__/
+
+# Other common files/directories to ignore
+*.log
+*.swp
+*.swo
+*.bak
+*.tmp
+*.DS_Store
+*.egg-info/
+dist/
+build/
+
+.cache
+
+src/test_solar.py 
+src/test_tok.py
