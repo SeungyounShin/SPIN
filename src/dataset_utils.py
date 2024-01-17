@@ -122,6 +122,18 @@ class SupervisedDataset(Dataset):
             system_promtps, questions, responses = [], [], []
             print(f"+ preprocessing {len(datasets['train'])} train data")
             for item in tqdm(datasets["train"]):
+                if item.get("conversations") is not None:
+                    # for slimorca dataset
+                    new_item = dict()
+                    if item["conversations"][0]["from"] == "system":
+                        new_item["system_prompt"] = item["conversations"][0]["value"]
+                        new_item["question"] = item["conversations"][1]["value"]
+                        new_item["response"] = item["conversations"][2]["value"]
+                    elif item["conversations"][0]["from"] == "human":
+                        new_item["system_prompt"] = DEFAULT_SYSTEM_PROMPT
+                        new_item["question"] = item["conversations"][0]["value"]
+                        new_item["response"] = item["conversations"][1]["value"]
+                    item = new_item
                 _sys_prompt = item.get("system_prompt", "")
                 if _sys_prompt == "":
                     _sys_prompt = DEFAULT_SYSTEM_PROMPT
@@ -139,12 +151,12 @@ class SupervisedDataset(Dataset):
         else:
             print(f"+ loading from ./cache/cached_dataset.pkl")
             start = time.time()
-            with ProgressBarFile("./.cache/small_cached_dataset.pkl") as f:
+            with ProgressBarFile("./.cache/cached_dataset.pkl") as f:
                 self.train_data = cPickle.load(f)
 
         # check the data
-        """ids_check = train_data["input_ids"][11]
-        labels_check = train_data["labels"][11]
+        """ids_check = self.train_data["input_ids"][11]
+        labels_check = self.train_data["labels"][11]
         check_str = ""
         for i, (id_, label) in enumerate(zip(ids_check, labels_check)):
             if label == IGNORE_INDEX:
@@ -153,7 +165,8 @@ class SupervisedDataset(Dataset):
             else:
                 # print in green
                 check_str += f" \033[92m{tokenizer.decode(id_)}\033[0m"
-        print(f"{check_str}")"""
+        print(f"{check_str}")
+        exit()"""
 
     def clean_question(self, question: str):
         if question.startswith("Q:"):

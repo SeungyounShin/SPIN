@@ -1,3 +1,5 @@
 fire
 datasets
+peft
+deepspeed
 transformers_stream_generator

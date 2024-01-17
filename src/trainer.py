@@ -5,6 +5,7 @@ import copy
 from typing import Optional, Sequence, Union, Callable, Dict
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn
 
 from src.rich_utils import rich_theme
 from src.dataset_utils import SupervisedDataset, DataCollatorForSupervisedDataset
@@ -171,57 +172,80 @@ class SPIN_Trainer:
                 position=0,
                 leave=True,
             )
-            self.console.print(f"[Total Batch] {len(self.train_dl)}", style="info")
-            for batch_idx, batch in enumerate(self.train_dl):
-                # synthetic data generation
-                x = batch["x"]  # (B x L_x x V)
-                with torch.no_grad():
-                    synthetic_y_x = self.model_t.generate(
-                        inputs=x.to(self.model_t.device),
-                        max_new_tokens=1024,
-                        top_p=0.9,
-                        do_sample=True,
-                        use_cache=True,
-                        pad_token_id=self.tokenizer.pad_token_id,
-                    )  # (B x (L_x + L_y') x V)
 
-                synthetic_label = copy.deepcopy(synthetic_y_x)
-                synthetic_label[:, : x.shape[1]] = IGNORE_INDEX
+            with Progress(
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(bar_width=None),
+                TextColumn("[progress.percentage]{task.percentage:>3.1f}%"),
+                TimeRemainingColumn(),
+                TextColumn(
+                    "Loss: [bold red]{task.fields[loss]}"
+                ),  # Custom column for loss
+                expand=True,
+            ) as progress:
+                task = progress.add_task(
+                    f"[Epoch {epoch}]", total=len(self.train_dl), loss=0
+                )
 
-                # forward model
-                input_ids = batch["input_ids"].cuda()  # (B x (L_x + L_y) x V)
-                labels = batch["labels"].cuda()  # (B x (L_x + L_y) x V)
+                for batch_idx, batch in enumerate(self.train_dl):
+                    # synthetic data generation
+                    x = batch["x"]  # (B x L_x x V)
+                    with torch.no_grad():
+                        synthetic_y_x = self.model_t.generate(
+                            inputs=x.to(self.model_t.device),
+                            max_new_tokens=1024,
+                            top_p=0.9,
+                            do_sample=True,
+                            use_cache=True,
+                            pad_token_id=self.tokenizer.pad_token_id,
+                        )  # (B x (L_x + L_y') x V)
 
-                with torch.no_grad():
-                    y_pred_t = self.model_t(input_ids)  # (B x (L_x + L_y) x V)
-                    y_prime_t = self.model_t(synthetic_y_x)  # (B x (L_x + L_y') x V)
+                    synthetic_label = copy.deepcopy(synthetic_y_x)
+                    synthetic_label[:, : x.shape[1]] = IGNORE_INDEX
 
-                y_pred = self.model(input_ids)
-                y_prime_pred = self.model(synthetic_y_x)
+                    # forward model
+                    input_ids = batch["input_ids"].cuda()  # (B x (L_x + L_y) x V)
+                    labels = batch["labels"].cuda()  # (B x (L_x + L_y) x V)
 
-                # log pθ(y|x)
-                logp = self.log_prob(y_pred, labels)
-                # log pθt(y|x)
-                logp_t = self.log_prob(y_pred_t, labels)
-                # log pθ(y′|x)
-                logp_prime = self.log_prob(y_prime_pred, synthetic_label)
-                # log pθt(y′|x)
-                logp_prime_t = self.log_prob(y_prime_t, synthetic_label)
+                    with torch.no_grad():
+                        y_pred_t = self.model_t(input_ids)  # (B x (L_x + L_y) x V)
+                        y_prime_t = self.model_t(
+                            synthetic_y_x
+                        )  # (B x (L_x + L_y') x V)
 
-                # log pθ(y| x) - log pθt(y|x)
-                L_real = logp - logp_t
+                    y_pred = self.model(input_ids)
+                    y_prime_pred = self.model(synthetic_y_x)
 
-                # log pθ(y′|x) - log pθt(y′|x)
-                L_syn = logp_prime - logp_prime_t
+                    # log pθ(y|x)
+                    logp = self.log_prob(y_pred, labels)
+                    # log pθt(y|x)
+                    logp_t = self.log_prob(y_pred_t, labels)
+                    # log pθ(y′|x)
+                    logp_prime = self.log_prob(y_prime_pred, synthetic_label)
+                    # log pθt(y′|x)
+                    logp_prime_t = self.log_prob(y_prime_t, synthetic_label)
 
-                L_spin = self.l(self.reg_term * L_real - self.reg_term * L_syn)
+                    # log pθ(y| x) - log pθt(y|x)
+                    L_real = logp - logp_t
 
-                # update
-                self.optimizer.zero_grad()
-                L_spin.backward()
-                self.optimizer.step()
+                    # log pθ(y′|x) - log pθt(y′|x)
+                    L_syn = logp_prime - logp_prime_t
 
-                # log loss
-                losses.append(L_spin.item())
-                progress_bar.set_postfix(loss=L_spin.item())
-                progress_bar.update()
+                    L_spin = self.l(self.reg_term * L_real - self.reg_term * L_syn)
+
+                    # update
+                    self.optimizer.zero_grad()
+                    L_spin.backward()
+                    self.optimizer.step()
+
+                    # log loss
+                    losses.append(L_spin.item())
+                    progress.update(task, advance=1, loss=f"{L_spin.item():.4f}")
+
+            # save model
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+            self.model.save_pretrained(save_dir)
+            self.console.print(
+                f"[Epoch {epoch}] Save model to {save_dir}", style="info"
+            )

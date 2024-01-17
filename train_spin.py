@@ -23,7 +23,7 @@ from src.trainer import SPIN_Trainer
 def main(
     batch_size: int = 2,
     model_name: str = "Upstage/SOLAR-10.7B-v1.0",
-    ds_names: List[str] = ["Open-Orca/OpenOrca"],
+    ds_names: List[str] = ["Open-Orca/SlimOrca"],
     accelerate_mix_precision: str = "bf16",
     deepspeed_stage: int = 2,
     deepspeed_gradient_clipping: float = 1.0,
